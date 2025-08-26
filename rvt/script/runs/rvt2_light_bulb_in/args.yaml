@@ -1,9 +1,0 @@
-device: '0'
-exp_cfg_opts: ''
-exp_cfg_path: /home/nil/robotics/RVT/rvt/configs/rvt2_example.yaml
-log_dir: runs
-mvt_cfg_opts: ''
-mvt_cfg_path: /home/nil/robotics/RVT/rvt/mvt/configs/rvt2.yaml
-refresh_replay: false
-visualize: false
-with_eval: false
