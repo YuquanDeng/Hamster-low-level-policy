@@ -6,6 +6,7 @@
 # adapted to support loading from disk for faster initialization time
 
 # Adapted from: https://github.com/stepjam/ARM/blob/main/arm/c2farm/launch_utils.py
+from calendar import c
 import os
 import torch
 import pickle
@@ -19,7 +20,6 @@ import peract_colab.arm.utils as utils
 from peract_colab.rlbench.utils import get_stored_demo
 from yarr.utils.observation_type import ObservationElement
 from yarr.replay_buffer.replay_buffer import ReplayElement, ReplayBuffer
-from yarr.replay_buffer.uniform_replay_buffer import UniformReplayBuffer
 from rlbench.backend.observation import Observation
 from rlbench.demo import Demo
 
@@ -32,8 +32,11 @@ def create_replay(
     batch_size: int,
     timesteps: int,
     disk_saving: bool,
-    cameras: list,
     voxel_sizes,
+    cameras: list=CAMERAS,
+    add_traj: bool=False,
+    trajectory_root_dir: str=None,
+    lang_instruction_path: str=None,
     replay_size=3e5,
 ):
 
@@ -44,6 +47,8 @@ def create_replay(
     max_token_seq_len = 77
     lang_feat_dim = 1024
     lang_emb_dim = 512
+    
+    feat_dim = 6  if add_traj else 3 # rgb(3) + traj(3) if add trajectory else rgb(3)
 
     # low_dim_state
     observation_elements = []
@@ -57,7 +62,7 @@ def create_replay(
             ObservationElement(
                 "%s_rgb" % cname,
                 (
-                    3,
+                    feat_dim,
                     IMAGE_SIZE,
                     IMAGE_SIZE,
                 ),
@@ -139,7 +144,28 @@ def create_replay(
         ReplayElement("sample_frame", (), int),
     ]
 
-    replay_buffer = (
+    if add_traj:
+        from rvt.utils.traj_uniform_replay_buffer import TrajUniformReplayBuffer  
+        replay_buffer = (
+            TrajUniformReplayBuffer(  # all tuples in the buffer have equal sample weighting
+                disk_saving=disk_saving,
+                batch_size=batch_size,
+                timesteps=timesteps,
+                replay_capacity=int(replay_size),
+                action_shape=(8,),  # 3 translation + 4 rotation quaternion + 1 gripper open
+                action_dtype=np.float32,
+                reward_shape=(),
+                reward_dtype=np.float32,
+                update_horizon=1,
+                observation_elements=observation_elements,
+                extra_replay_elements=extra_replay_elements,
+                trajectory_root_dir=trajectory_root_dir,
+                lang_instruction_path=lang_instruction_path,
+            )
+        )
+    else:
+        from yarr.replay_buffer.uniform_replay_buffer import UniformReplayBuffer
+        replay_buffer = (
         UniformReplayBuffer(  # all tuples in the buffer have equal sample weighting
             disk_saving=disk_saving,
             batch_size=batch_size,
@@ -223,12 +249,12 @@ def _add_keypoints_to_replay(
     inital_obs: Observation,
     demo: Demo,
     episode_keypoints: List[int],
-    cameras: List[str],
     rlbench_scene_bounds: List[float],
     voxel_sizes: List[int],
     rotation_resolution: int,
     crop_augmentation: bool,
     next_keypoint_idx: int,
+    cameras: List[str]=CAMERAS,
     description: str = "",
     clip_model=None,
     device="cpu",
@@ -261,7 +287,8 @@ def _add_keypoints_to_replay(
 
         obs_dict = extract_obs(
             obs,
-            CAMERAS,
+            # CAMERAS,
+            cameras=cameras,
             t=k - next_keypoint_idx,
             prev_action=prev_action,
             episode_length=25,
@@ -410,6 +437,7 @@ def fill_replay(
                     description=desc,
                     clip_model=clip_model,
                     device=device,
+                    cameras=cameras
                 )
 
         # save TERMINAL info in replay_info.npy

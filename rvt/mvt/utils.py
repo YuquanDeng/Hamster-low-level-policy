@@ -11,7 +11,7 @@ import sys
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-
+import cv2
 
 def place_pc_in_cube(
     pc, app_pc=None, with_mean_or_bounds=True, scene_bounds=None, no_op=False
@@ -160,7 +160,57 @@ def generate_hm_from_pt(pt, res, sigma, thres_sigma_times=3):
 
     return hm
 
+def viz_img_wpt(img, hmp, return_img=False):
+    """
+    Visualize an img and heat map
+    img: numpy array of size (h, w, 3) of type either of float in [0, 1] or
+        uint8 in [0, 255]
+    hmp: numpy array of size (h, w) or (h, w, 3) or (2, )
+    """
+    if img.dtype != np.uint8:
+        if not ((img.max() <= 1) and (img.min() >= 0)):
+            print(
+                f"In visualization, img is not in [0, 1],"
+                f" it is in [{img.min()}, {img.max()}"
+                f" and will be clipped."
+                f" This can happen in train mode with img_aug != 0"
+            )
+            img[img < 0] = 0
+            img[img > 1] = 1
 
+        img = (img * 255).astype(np.uint8)
+
+    if not (hmp is None):
+        if len(hmp.shape) == 1:
+            assert hmp.shape == (2,)
+            hmp = generate_hm_from_pt(
+                torch.tensor(hmp).unsqueeze(0),
+                img.shape[0:2],
+                ((img.shape[0] + img.shape[1]) / 2) / 128,
+            )
+            hmp = hmp[0].numpy()
+            hmp /= (hmp.max() + 1e-6)  # for better contrast
+
+        if hmp.dtype != np.uint8:
+            assert (hmp.max() <= 1) and (hmp.min() >= 0)
+            hmp = (hmp * 255).astype(np.uint8)
+
+        hmp = cv2.applyColorMap(hmp, cv2.COLORMAP_JET)
+        sup_imp_img = cv2.addWeighted(hmp, 0.5, img, 0.5, 0)
+
+    else:
+        sup_imp_img = img
+
+    if return_img:
+        # sup_imp_img = cv2.resize(sup_imp_img, (200, 200))
+        return sup_imp_img
+    else:
+        plt.figure(figsize=(10, 10))
+        plt.grid()
+        plt.imshow(sup_imp_img)
+        plt.axis("on")
+        plt.show()
+        
 class ForkedPdb(pdb.Pdb):
     """A Pdb subclass that may be used
     from a forked multiprocessing child

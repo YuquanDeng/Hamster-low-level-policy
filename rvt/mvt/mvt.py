@@ -14,6 +14,9 @@ from rvt.mvt.mvt_single import MVT as MVTSingle
 from rvt.mvt.config import get_cfg_defaults
 from rvt.mvt.renderer import BoxRenderer
 
+import numpy as np
+import cv2
+import torchvision
 
 class MVT(nn.Module):
     def __init__(
@@ -339,6 +342,107 @@ class MVT(nn.Module):
         if self.training:
             assert (not self.stage_two) or (not wpt_local is None)
 
+    def get_img_viz(self, img, out, mvt1):
+        """
+        :param img: bc, num_cam, num_channels, h, w
+        :param out: output from mvt forward
+        :param pnt_anno: 3D location of the point annotation (bc, 3) or None
+        :param dyn_cam_info:
+        :param wpt_local: 3D location of the wpt (bc, topk, 3) or None
+        :param mvt1_or_mvt2: True for mvt1, False for mvt2
+        :return: img_viz: 3, h, w * num_cam
+        """
+        print("WARNING: you creating visualizations which might affect speed")
+        if mvt1:
+            _mvt = self.mvt1
+            _out = out
+        else:
+            _mvt = self.mvt2
+            _out = out["mvt2"]
+
+        # step 1: clone original img
+        img_feat = img.clone().detach() # bs, num of cams, feat_dim, h, w
+        _, nc, feat_dim, h, w = img_feat.shape
+
+        # num_cam, h, w
+        out_hm = _out["trans"].clone().detach()[0]
+        out_hm = torch.nn.functional.softmax(out_hm.view(nc, h * w), 1).view(nc, h, w)
+        
+        # TODO: visualize the predicted heatmap
+
+        def denormalize(input_tensor):
+            # tensor -> np.ndarray in 0-255 scale
+            output_arr = input_tensor.permute((1, 2, 0)).cpu().numpy()  # c, h, w => h, w, c
+
+            # 0-1 scale
+            min_val = output_arr.min()
+            max_val = output_arr.max()
+            output_arr = (output_arr - min_val) / (max_val - min_val)
+
+            # 0-255 scale
+            output_arr = (output_arr * 255).astype(np.uint8) # h, w, 3
+
+            return output_arr
+
+        TRAJ_FEAT_DIM = 13
+        if feat_dim == TRAJ_FEAT_DIM:
+            add_traj = True
+            pc = img_feat[:, :, 0:3].clone().detach()[0]  # bs, nc, 3, h, w => nc, 3, h, w
+            rgb = img_feat[:, :, 3:6].clone().detach()[0]  # bs, nc, 3, h, w => nc, 3, h, w
+            traj = img_feat[:, :, 6:9].clone().detach()[0] # bs, nc, 3, h, w => nc, 3, h, w
+            depth_img = img_feat[:, :, 9:10].clone().detach()[0]  # bs, nc, 1, h, w => nc, 1, h, w
+        else:
+            add_traj = False
+            pc = img_feat[:, :, 0:3].clone().detach()[0]  # bs, nc, 3, h, w => nc, 3, h, w
+            rgb = img_feat[:, :, 3:6].clone().detach()[0]  # bs, nc, 3, h, w => nc, 3, h, w
+            depth_img = img_feat[:, :, 6:7].clone().detach()[0]  # bs, nc, 1, h, w => nc, 1, h, w
+
+        img_viz = []
+
+        # pc
+        for _pc in pc:            
+            _pc = denormalize(_pc) # h, w, 3
+            assert _pc.shape == (h, w, 3), f"Shape is {_pc.shape}, expected (h, w, 3)"
+            assert _pc.dtype == np.uint8, f"Dtype is {_pc.dtype}, expected uint8"
+            img_viz.append(_pc)
+
+        # rgb
+        for _rgb in rgb:
+            _rgb = mvt_utils.viz_img_wpt(
+                _rgb.permute(1, 2, 0).cpu().numpy(),  # h, w, 3
+                None,
+                return_img=True,
+            )
+            assert _rgb.shape == (h, w, 3), f"Shape is {_rgb.shape}, expected (h, w, 3)"
+            assert _rgb.dtype == np.uint8, f"Dtype is {_rgb.dtype}, expected uint8"
+            img_viz.append(_rgb)
+
+        # traj (if add_traj)
+        if add_traj:
+            for _traj in traj:
+                _traj = mvt_utils.viz_img_wpt(
+                    _traj.permute(1, 2, 0).cpu().numpy(),  # h, w, 3
+                    None,
+                    return_img=True,
+                )
+                assert _traj.shape == (h, w, 3), f"Shape is {_traj.shape}, expected (h, w, 3)"
+                assert _traj.dtype == np.uint8, f"Dtype is {_traj.dtype}, expected uint8"
+                img_viz.append(_traj)
+        
+        # depth
+        for _depth_img in depth_img:
+            _depth_img = denormalize(_depth_img) # h, w, 1
+            _depth_img = np.repeat(_depth_img, 3, axis=2).astype(np.uint8) # h, w, 3
+            assert _depth_img.shape == (h, w, 3), f"Shape is {_depth_img.shape}, expected (h, w, 3)"
+            assert _depth_img.dtype == np.uint8, f"Dtype is {_depth_img.dtype}, expected uint8"
+
+            img_viz.append(_depth_img) # h, w, 3
+
+        # convert to a single image
+        img_viz = [torch.tensor(x).permute(2, 0, 1) for x in img_viz]
+        img_viz = torchvision.utils.make_grid(img_viz, nc)
+        return img_viz
+    
     def forward(
         self,
         pc,
@@ -348,6 +452,7 @@ class MVT(nn.Module):
         img_aug=0,
         wpt_local=None,
         rot_x_y=None,
+        visualize=False,
         **kwargs,
     ):
         """
@@ -400,6 +505,15 @@ class MVT(nn.Module):
             **kwargs,
         )
 
+
+        if visualize:
+            img_viz = self.get_img_viz(
+                img,
+                out,
+                mvt1=True,
+            )
+            out["img_viz"] = img_viz
+                
         if self.stage_two:
             with torch.no_grad():
                 # adding then noisy location for training
@@ -444,7 +558,7 @@ class MVT(nn.Module):
                     mvt1_or_mvt2=False,
                     dyn_cam_info=None,
                 )
-
+                    
             out_mvt2 = self.mvt2(
                 img=img,
                 proprio=proprio,
@@ -453,10 +567,18 @@ class MVT(nn.Module):
                 rot_x_y=rot_x_y,
                 **kwargs,
             )
-
+                 
             out["wpt_local1"] = wpt_local_stage_one_noisy
             out["rev_trans"] = rev_trans
             out["mvt2"] = out_mvt2
+
+            if visualize:
+                img_viz = self.get_img_viz(
+                    img,
+                    out,
+                    mvt1=False,
+                )
+                out["mvt2"]["img_viz"] = img_viz
 
         return out
 

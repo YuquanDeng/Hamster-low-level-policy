@@ -1,3 +1,78 @@
+# Hamster Low-Level Policy (RVT) — Minimal Implementation
+This repository provides a minimal implementation of the low-level policy from the Hamster paper (`https://hamster-robot.github.io/`). It includes a single example for training a single task with trajectory.
+
+## Prerequisites
+- Ensure your environment is set up by following the original RVT-2 repository README (included below).
+- Download `light_bulb_in.zip` from the `train/` directory at `https://drive.google.com/drive/folders/0B2LlLwoO3nfZfkFqMEhXWkxBdjJNNndGYl9uUDQwS1pfNkNHSzFDNGwzd1NnTmlpZXR1bVE?resourcekey=0-jRw5RaXEYRLe2W6aNrNFEQ`, place it under `rvt/data/train`, then unzip:
+```
+unzip light_bulb_in.zip
+```
+
+- Download `light_bulb_in.tar.xz` from the `replay_train/` directory at `https://huggingface.co/datasets/ankgoyal/rvt/tree/main/replay/`, place it under `rvt/replay/replay_train`, then extract:
+```
+tar -xf light_bulb_in.tar.xz
+```
+
+
+## Data Preparation
+1) Generate meta file
+
+```
+conda activate rvt
+RVT_DIR={repo root dir}
+cd script
+
+code meta_generation.sh
+# Modify ROOT_DIR inside meta_generation.sh, then run:
+sh meta_generation.sh
+```
+
+- The generated meta file will be in `$RVT_DIR/rvt/data/train_meta`.
+
+2) Generate ground-truth trajectory
+
+```
+code traj_generation.sh
+# Modify ROOT_DIR inside traj_generation.sh, then run:
+sh traj_generation.sh
+```
+
+- The generated trajectory images will be in `$RVT_DIR/rvt/data/train_traj`.
+
+## Sanity Check
+Visualize the first-frame RGB of an episode and the corresponding ground-truth trajectory to ensure they look reasonable:
+
+```
+code $RVT_DIR/rvt/data/train/light_bulb_in/all_variations/episodes/episode0/front_rgb/0.png
+code $RVT_DIR/rvt/data/train_traj/light_bulb_in/all_variations/episodes/episode0_gt_traj_with_action.png
+```
+
+## Training
+Train RVT-2 with trajectory on the `light_bulb_in` single task:
+
+```
+cd $RVT_DIR
+
+code train_traj_example.sh
+# Change ROOT_DIR inside the script, then run:
+sh train_traj_example.sh
+```
+
+### Visualize Network Inputs
+```
+code train_visualization.sh
+# Change ROOT_DIR inside the script, then run:
+sh train_visualization.sh
+```
+
+### Train RVT-2 without trajectory (vanilla)
+```
+sh train_vanilla_example.sh
+```
+
+
+### Original RVT2 repository readme
+
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/rvt-2-learning-precise-manipulation-from-few/robot-manipulation-on-rlbench)](https://paperswithcode.com/sota/robot-manipulation-on-rlbench?p=rvt-2-learning-precise-manipulation-from-few)
 
 [***RVT-2: Learning Precise Manipulation from Few Examples***](https://robotic-view-transformer-2.github.io/) <br/>

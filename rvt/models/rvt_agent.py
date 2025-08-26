@@ -27,7 +27,10 @@ from yarr.agents.agent import ActResult
 from rvt.utils.dataset import _clip_encode_text
 from rvt.utils.lr_sched_utils import GradualWarmupScheduler
 
-
+import os
+from PIL import Image
+    
+    
 def eval_con(gt, pred):
     assert gt.shape == pred.shape, print(f"{gt.shape} {pred.shape}")
     assert len(gt.shape) == 2
@@ -296,6 +299,7 @@ class RVTAgent:
         rot_ver: int = 0,
         rot_x_y_aug: int = 2,
         log_dir="",
+        visualize: bool = False,
     ):
         """
         :param gt_hm_sigma: the std of the groundtruth hm, currently for for
@@ -342,7 +346,7 @@ class RVTAgent:
         self.move_pc_in_bound = move_pc_in_bound
         self.rot_ver = rot_ver
         self.rot_x_y_aug = rot_x_y_aug
-
+        self.visualize = visualize
         self._cross_entropy_loss = nn.CrossEntropyLoss(reduction="none")
         if isinstance(self._network, DistributedDataParallel):
             self._net_mod = self._network.module
@@ -521,6 +525,28 @@ class RVTAgent:
 
         return q_trans, rot_q, grip_q, collision_q, y_q, pts
 
+    def save_viz(self, out, vis_id):
+        """
+        :param out: rvt output
+        """
+        assert "img_viz" in out
+        abs_log_dir = os.path.abspath(self.log_dir)
+        if not hasattr(self, "counter"):
+            self.counter = 0
+            print(f"Saving all test visualzations in {abs_log_dir}")
+            if not os.path.exists(self.log_dir):
+                os.makedirs(self.log_dir)
+        else:
+            self.counter += 1
+
+        img_viz = [out["img_viz"]]
+        if "mvt2" in out:
+            img_viz.append(out["mvt2"]["img_viz"])
+        img_viz = torch.cat(img_viz, dim=1)
+        img_viz = Image.fromarray(img_viz.permute(1, 2, 0).numpy())
+        img_viz.save(f"{self.log_dir}/{self.counter}_{vis_id}.jpeg")
+        print(f"save {abs_log_dir}/{self.counter}_{vis_id}.jpeg.")
+        
     def update(
         self,
         step: int,
@@ -657,6 +683,7 @@ class RVTAgent:
                 img_aug=img_aug,
                 wpt_local=wpt_local if self._network.training else None,
                 rot_x_y=rot_x_y if self.rot_ver == 1 else None,
+                visualize=self.visualize,
             )
 
             q_trans, rot_q, grip_q, collision_q, y_q, pts = self.get_q(
@@ -766,6 +793,9 @@ class RVTAgent:
 
                 return_out.update(return_log)
 
+        if self.visualize:
+            self.save_viz(out, vis_id="train_debug")
+            
         return return_out
 
     @torch.no_grad()

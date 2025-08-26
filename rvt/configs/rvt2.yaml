@@ -17,3 +17,11 @@ peract:
 rvt:
   place_with_mean: False
   img_aug: 0.0
+
+# use four views
+rlbench:
+  cameras: 
+        - front
+        - left_shoulder
+        - right_shoulder
+        - wrist

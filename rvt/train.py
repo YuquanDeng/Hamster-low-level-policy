@@ -27,7 +27,7 @@ import rvt.mvt.config as mvt_cfg_mod
 
 from rvt.mvt.mvt import MVT
 from rvt.models.rvt_agent import print_eval_log, print_loss_log
-from rvt.utils.get_dataset import get_dataset
+# from rvt.utils.get_dataset import get_dataset
 from rvt.utils.rvt_utils import (
     TensorboardManager,
     short_name,
@@ -145,6 +145,7 @@ def experiment(rank, cmd_args, devices, port):
     ddp_utils.setup(rank, world_size=len(devices), port=port)
 
     exp_cfg = exp_cfg_mod.get_cfg_defaults()
+    exp_cfg.set_new_allowed(is_new_allowed=True) # allow to add new keys 
     if cmd_args.exp_cfg_path != "":
         exp_cfg.merge_from_file(cmd_args.exp_cfg_path)
     if cmd_args.exp_cfg_opts != "":
@@ -179,21 +180,55 @@ def experiment(rank, cmd_args, devices, port):
     print("Training on {} tasks: {}".format(len(tasks), tasks))
 
     t_start = time.time()
-    get_dataset_func = lambda: get_dataset(
-        tasks,
-        BATCH_SIZE_TRAIN,
-        None,
-        TRAIN_REPLAY_STORAGE_DIR,
-        None,
-        DATA_FOLDER,
-        NUM_TRAIN,
-        None,
-        cmd_args.refresh_replay,
-        device,
-        num_workers=exp_cfg.num_workers,
-        only_train=True,
-        sample_distribution_mode=exp_cfg.sample_distribution_mode,
-    )
+    add_traj = hasattr(exp_cfg, 'add_traj') and exp_cfg.add_traj
+    
+    if not add_traj:
+        from rvt.utils.get_dataset import get_dataset
+        get_dataset_func = lambda: get_dataset(
+            tasks,
+            BATCH_SIZE_TRAIN,
+            None,
+            TRAIN_REPLAY_STORAGE_DIR,
+            None,
+            DATA_FOLDER,
+            NUM_TRAIN,
+            None,
+            cmd_args.refresh_replay,
+            device,
+            num_workers=exp_cfg.num_workers,
+            only_train=True,
+            sample_distribution_mode=exp_cfg.sample_distribution_mode,
+        )
+    else:
+        from rvt.utils.get_traj_dataset import get_dataset
+        
+        assert hasattr(exp_cfg, 'traj')
+        assert hasattr(exp_cfg.traj, 'trajectory_root_dir')
+        assert hasattr(exp_cfg.traj, 'lang_instruction_path')
+        
+        assert hasattr(exp_cfg, 'rlbench')
+        assert hasattr(exp_cfg.rlbench, 'cameras')
+        
+        get_dataset_func = lambda: get_dataset(
+            tasks,
+            BATCH_SIZE_TRAIN,
+            None,
+            TRAIN_REPLAY_STORAGE_DIR,
+            None,
+            DATA_FOLDER,
+            NUM_TRAIN,
+            None,
+            cmd_args.refresh_replay,
+            device,
+            num_workers=exp_cfg.num_workers,
+            only_train=True,
+            trajectory_root_dir=exp_cfg.traj.trajectory_root_dir,
+            lang_instruction_path=exp_cfg.traj.lang_instruction_path,
+            cameras=exp_cfg.rlbench.cameras,
+            sample_distribution_mode=exp_cfg.sample_distribution_mode,
+        )
+        
+        
     train_dataset, _ = get_dataset_func()
     t_end = time.time()
     print("Created Dataset. Time Cost: {} minutes".format((t_end - t_start) / 60.0))
@@ -229,9 +264,11 @@ def experiment(rank, cmd_args, devices, port):
             stage_two=mvt_cfg.stage_two,
             rot_ver=mvt_cfg.rot_ver,
             scene_bounds=SCENE_BOUNDS,
-            cameras=CAMERAS,
+            # cameras=CAMERAS,
+            cameras=exp_cfg.rlbench.cameras,
             log_dir=f"{log_dir}/test_run/",
             cos_dec_max_step=EPOCHS * TRAINING_ITERATIONS,
+            visualize=cmd_args.visualize,
             **exp_cfg.peract,
             **exp_cfg.rvt,
         )
@@ -295,6 +332,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--mvt_cfg_opts", type=str, default="")
     parser.add_argument("--exp_cfg_opts", type=str, default="")
+    parser.add_argument("--visualize", action="store_true", default=False)
 
     parser.add_argument("--log-dir", type=str, default="runs")
     parser.add_argument("--with-eval", action="store_true", default=False)
